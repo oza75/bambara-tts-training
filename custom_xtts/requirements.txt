@@ -1,0 +1,9 @@
+transformers[torch]
+datasets
+accelerate
+deepspeed
+huggingface_hub
+torchaudio
+librosa
+soundfile
+evaluate
