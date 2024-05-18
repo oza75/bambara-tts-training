@@ -123,13 +123,13 @@ def main():
         eval_steps=500,
         save_steps=1000,
         learning_rate=5e-5,
-        per_device_train_batch_size=8,
-        per_device_eval_batch_size=8,
+        per_device_train_batch_size=64,
+        per_device_eval_batch_size=32,
         num_train_epochs=3,
         weight_decay=0.01,
+        optim="adamw_torch_fused",
         fp16=True,
         deepspeed="./deepspeed_config.json",
-        logging_dir="./logs",
     )
 
     # Initialize the Trainer
