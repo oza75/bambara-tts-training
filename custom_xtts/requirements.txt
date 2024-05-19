@@ -9,3 +9,5 @@ soundfile
 evaluate
 diffusers
 wandb
+tensorboardX
+matplotlib
