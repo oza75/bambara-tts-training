@@ -201,7 +201,7 @@ class VQVAEFeatureExtractor(FeatureExtractionMixin):
         attention_masks = torch.stack(attention_masks).view(batch_size, 1, n_frames).expand(-1, n_mels, -1)
 
         # Return a dictionary containing the Mel spectrograms and attention masks
-        return {"mel_spectrogram": mel_spectrograms, "attention_mask": attention_masks}
+        return {"mel_spectrogram": mel_spectrograms, "attention_masks": attention_masks}
 
 
 class VQVAEProcessor(ProcessorMixin):
@@ -236,5 +236,5 @@ class VQVAEProcessor(ProcessorMixin):
         """
         features = self.feature_extractor(batch['audio'])
         batch["mel_spectrogram"] = features["mel_spectrogram"]
-        batch["attention_mask"] = features["attention_mask"]
+        batch["attention_masks"] = features["attention_masks"]
         return batch

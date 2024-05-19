@@ -26,16 +26,17 @@ class VQVAE(VQModel):
         return VQEncoderOutput(latents=h_q)
 
     def forward(
-            self, input_values: torch.FloatTensor,
-            attention_mask: Optional[torch.Tensor] = None,
+            self,
+            input_ids: torch.FloatTensor,
+            attention_masks: Optional[torch.Tensor] = None,
             return_dict: bool = True
     ) -> Union[DecoderOutput, Tuple[torch.FloatTensor, ...]]:
         """
         The forward method with attention mask support.
 
         Args:
-            input_values (`torch.FloatTensor`): Input values.
-            attention_mask (`torch.Tensor`, *optional*): Attention mask for the input sample.
+            input_ids (`torch.FloatTensor`): Input values.
+            attention_masks (`torch.Tensor`, *optional*): Attention mask for the input sample.
             return_dict (`bool`, *optional*, defaults to `True`):
                 Whether or not to return a `DecoderOutput` instead of a plain tuple.
 
@@ -43,7 +44,7 @@ class VQVAE(VQModel):
             `DecoderOutput` or `tuple`:
                 If return_dict is True, a `DecoderOutput` is returned, otherwise a plain `tuple` is returned.
         """
-        encoder_outputs = self.encode(input_values, return_dict=return_dict)
+        encoder_outputs = self.encode(input_ids, return_dict=return_dict)
 
         if not return_dict:
             h_e, h_q = encoder_outputs
@@ -106,12 +107,13 @@ class SpeechVQVAE(PreTrainedModel):
         return self.model.encode(x, return_dict=return_dict)
 
     def forward(
-            self, input_values: torch.FloatTensor,
-            labels: torch.FloatTensor = None,
-            attention_mask: Optional[torch.Tensor] = None,
+            self,
+            input_ids: torch.FloatTensor,
+            label_ids: torch.FloatTensor = None,
+            attention_masks: Optional[torch.Tensor] = None,
             return_dict: bool = False
     ) -> Union[DecoderOutput, Tuple[torch.FloatTensor, ...]]:
-        return self.model(input_values, attention_mask=attention_mask, return_dict=return_dict)
+        return self.model(input_ids, attention_masks=attention_masks, return_dict=return_dict)
 
     def save_pretrained(self, save_directory, **kwargs):
         super().save_pretrained(save_directory, **kwargs)

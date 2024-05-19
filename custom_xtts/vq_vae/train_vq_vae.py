@@ -27,8 +27,8 @@ class AudioLoggingCallback(WandbCallback):
         batch = next(iter(eval_dataloader))
 
         # Move batch to the correct device
-        inputs = batch["input_values"].to(model.device)
-        attention_masks = batch["attention_mask"].to(model.device)
+        inputs = batch["input_ids"].to(model.device)
+        attention_masks = batch["attention_masks"].to(model.device)
 
         # Get model outputs
         with torch.no_grad():
@@ -65,7 +65,7 @@ class AudioLoggingCallback(WandbCallback):
             plt.close(fig)
 
 
-def masked_vq_vae_loss(x, x_recon, z_e, z_q, attention_mask, beta=0.25):
+def masked_vq_vae_loss(x, x_recon, z_e, z_q, attention_masks, beta=0.25):
     """
     Compute the masked VQ-VAE loss.
 
@@ -74,26 +74,26 @@ def masked_vq_vae_loss(x, x_recon, z_e, z_q, attention_mask, beta=0.25):
         x_recon (torch.Tensor): Reconstructed input.
         z_e (torch.Tensor): Encoder output (continuous).
         z_q (torch.Tensor): Quantized encoder output (discrete).
-        attention_mask (torch.Tensor): Mask indicating valid parts of the input.
+        attention_masks (torch.Tensor): Mask indicating valid parts of the input.
         beta (float): Hyperparameter for commitment loss.
 
     Returns:
         torch.Tensor: Total VQ-VAE loss with masking.
     """
     # Ensure the attention mask has the same shape as the inputs
-    attention_mask = attention_mask.expand_as(x)
+    attention_masks = attention_masks.expand_as(x)
 
     # Reconstruction loss with masking
-    recon_loss = F.mse_loss(x_recon * attention_mask, x * attention_mask, reduction='none')
-    recon_loss = recon_loss.sum() / attention_mask.sum()
+    recon_loss = F.mse_loss(x_recon * attention_masks, x * attention_masks, reduction='none')
+    recon_loss = recon_loss.sum() / attention_masks.sum()
 
     # VQ loss with masking
-    vq_loss = F.mse_loss(z_q.detach() * attention_mask, z_e * attention_mask, reduction='none')
-    vq_loss = vq_loss.sum() / attention_mask.sum()
+    vq_loss = F.mse_loss(z_q.detach() * attention_masks, z_e * attention_masks, reduction='none')
+    vq_loss = vq_loss.sum() / attention_masks.sum()
 
     # Commitment loss with masking
-    commit_loss = F.mse_loss(z_q * attention_mask, z_e.detach() * attention_mask, reduction='none')
-    commit_loss = commit_loss.sum() / attention_mask.sum()
+    commit_loss = F.mse_loss(z_q * attention_masks, z_e.detach() * attention_masks, reduction='none')
+    commit_loss = commit_loss.sum() / attention_masks.sum()
 
     # Total loss
     loss = recon_loss + vq_loss + beta * commit_loss
@@ -103,7 +103,7 @@ def masked_vq_vae_loss(x, x_recon, z_e, z_q, attention_mask, beta=0.25):
 
 def compute_metrics(eval_pred):
     """
-    Compute evaluation metrics for VQ-VAE, applying attention masks.
+    Compute evaluation metrics for VQ-VAE.
 
     Args:
         eval_pred (EvalPrediction): The predictions and labels.
@@ -111,40 +111,23 @@ def compute_metrics(eval_pred):
     Returns:
         dict: A dictionary containing the computed metrics.
     """
-    logits, (labels, attention_masks) = eval_pred.predictions, eval_pred.label_ids
+    logits, labels = eval_pred.predictions, eval_pred.label_ids
 
-    # Debugging information
-    print(f"Logits type: {type(logits)}, Labels type: {type(labels)}, Attention masks type: {type(attention_masks)}")
-    print(f"Logits shape: {logits.shape}, Labels shape: {labels.shape}, Attention masks shape: {attention_masks.shape}")
-
-    # Ensure logits, labels, and attention_masks are tensors
+    # Ensure logits and labels are tensors
     if isinstance(logits, np.ndarray):
         logits = torch.tensor(logits)
     if isinstance(labels, np.ndarray):
         labels = torch.tensor(labels)
-    if isinstance(attention_masks, np.ndarray):
-        attention_masks = torch.tensor(attention_masks)
 
-    # Apply the attention masks
-    logits = logits * attention_masks
-    labels = labels * attention_masks
-
-    # Compute masked Mean Squared Error (MSE)
-    mse = F.mse_loss(logits, labels, reduction='none')
-    masked_mse = mse.sum() / (attention_masks.sum() + 1e-6)  # Add epsilon for numerical stability
-
-    # Debugging information
-    print(f"Masked MSE: {masked_mse.item()}")
+    # Compute Mean Squared Error (MSE)
+    mse = F.mse_loss(logits, labels, reduction='mean')
 
     # Compute Signal-to-Noise Ratio (SNR)
-    signal_power = (labels ** 2).sum() / (attention_masks.sum() + 1e-6)  # Add epsilon for numerical stability
-    noise_power = ((labels - logits) ** 2).sum() / (attention_masks.sum() + 1e-6)  # Add epsilon for numerical stability
+    signal_power = (labels ** 2).mean()
+    noise_power = ((labels - logits) ** 2).mean()
     snr = 10 * torch.log10(signal_power / (noise_power + 1e-6))  # Add epsilon for numerical stability
 
-    # Debugging information
-    print(f"Signal Power: {signal_power.item()}, Noise Power: {noise_power.item()}, SNR: {snr.item()}")
-
-    return {"mse": masked_mse.item(), "snr": snr.item()}
+    return {"mse": mse.item(), "snr": snr.item()}
 
 
 class DataCollator:
@@ -153,15 +136,15 @@ class DataCollator:
     """
 
     def __call__(self, features):
-        input_values = torch.stack([torch.tensor(f["input_values"], dtype=torch.float32) for f in features])
-        attention_mask = torch.stack([torch.tensor(f["attention_mask"], dtype=torch.float32) for f in features])
+        input_ids = torch.stack([torch.tensor(f["input_ids"], dtype=torch.float32) for f in features])
+        attention_masks = torch.stack([torch.tensor(f["attention_masks"], dtype=torch.float32) for f in features])
 
-        batch_size, n_mels, time_steps = input_values.shape
+        batch_size, n_mels, time_steps = input_ids.shape
 
-        input_values = input_values.view(batch_size, 1, n_mels, time_steps)
-        attention_mask = attention_mask.view(batch_size, 1, n_mels, time_steps)
+        input_ids = input_ids.view(batch_size, 1, n_mels, time_steps)
+        attention_masks = attention_masks.view(batch_size, 1, n_mels, time_steps)
 
-        return {"input_values": input_values, "labels": input_values, "attention_mask": attention_mask}
+        return {"input_ids": input_ids, "label_ids": input_ids, "attention_masks": attention_masks}
 
 
 def preprocess_function(examples, processor):
@@ -178,31 +161,31 @@ def preprocess_function(examples, processor):
     batch = processor(examples)
 
     return {
-        "input_values": batch["mel_spectrogram"],
-        "attention_mask": batch["attention_mask"]
+        "input_ids": batch["mel_spectrogram"],
+        "attention_masks": batch["attention_masks"]
     }
 
 
 class CustomTrainer(Trainer):
     def compute_loss(self, model, inputs, return_outputs=False):
-        input_values = inputs["input_values"]
-        attention_mask = inputs["attention_mask"]
+        input_ids = inputs["input_ids"]
+        attention_masks = inputs["attention_masks"]
 
         # Forward pass
-        outputs = model(input_values, attention_mask=attention_mask)
+        outputs = model(input_ids, attention_masks=attention_masks)
         logits = outputs[0]
 
         # Compute custom loss
         loss = masked_vq_vae_loss(
-            x=input_values,
+            x=input_ids,
             x_recon=logits,
             z_e=outputs[2],
             z_q=outputs[1],
-            attention_mask=attention_mask,
+            attention_masks=attention_masks,
             beta=0.25
         )
 
-        return (loss, outputs) if return_outputs else loss
+        return (loss, logits) if return_outputs else loss
 
 
 def main():
@@ -210,7 +193,7 @@ def main():
     dataset = load_dataset("oza75/bambara-tts", "denoised")
 
     # Split the dataset into training and evaluation sets
-    dataset = dataset['train'].select(range(20)).train_test_split(test_size=0.1, seed=42)
+    dataset = dataset['train'].train_test_split(test_size=0.1, seed=42)
 
     # Instantiate the feature extractor and processor
     feature_extractor = VQVAEFeatureExtractor(sampling_rate=22050, mel_norm_file='../mel_stats.pth', max_duration=10)
@@ -230,14 +213,15 @@ def main():
     # Define training arguments
     training_args = TrainingArguments(
         output_dir="./results",
-        eval_strategy="epoch",
-        eval_steps=1,
+        eval_strategy="steps",
+        eval_steps=50,
         save_steps=1000,
         learning_rate=5e-5,
-        per_device_train_batch_size=16,
-        per_device_eval_batch_size=8,
+        per_device_train_batch_size=32,
+        per_device_eval_batch_size=16,
         num_train_epochs=3,
         weight_decay=0.01,
+        warmup_steps=500,
         optim="adamw_torch_fused",
         tf32=True,
         deepspeed="../deepspeed_config.json",
@@ -254,7 +238,7 @@ def main():
         eval_dataset=eval_dataset,
         data_collator=data_collator,
         compute_metrics=compute_metrics,
-        # callbacks=[AudioLoggingCallback]
+        callbacks=[AudioLoggingCallback]
     )
 
     # Start training
