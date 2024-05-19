@@ -111,8 +111,9 @@ def compute_metrics(eval_pred):
     Returns:
         dict: A dictionary containing the computed metrics.
     """
-    (logits, attention_masks), labels = eval_pred.predictions, eval_pred.label_ids
+    logits, (labels, attention_masks) = eval_pred.predictions, eval_pred.label_ids
 
+    # Debugging information
     print(f"Logits type: {type(logits)}, Labels type: {type(labels)}, Attention masks type: {type(attention_masks)}")
     print(f"Logits shape: {logits.shape}, Labels shape: {labels.shape}, Attention masks shape: {attention_masks.shape}")
 
@@ -124,19 +125,24 @@ def compute_metrics(eval_pred):
     if isinstance(attention_masks, np.ndarray):
         attention_masks = torch.tensor(attention_masks)
 
-    print(f"Compute Metrics: {labels.shape, attention_masks.shape}")
     # Apply the attention masks
     logits = logits * attention_masks
     labels = labels * attention_masks
 
     # Compute masked Mean Squared Error (MSE)
     mse = F.mse_loss(logits, labels, reduction='none')
-    masked_mse = mse.sum() / attention_masks.sum()
+    masked_mse = mse.sum() / (attention_masks.sum() + 1e-6)  # Add epsilon for numerical stability
+
+    # Debugging information
+    print(f"Masked MSE: {masked_mse.item()}")
 
     # Compute Signal-to-Noise Ratio (SNR)
-    signal_power = (labels ** 2).sum() / attention_masks.sum()
-    noise_power = ((labels - logits) ** 2).sum() / attention_masks.sum()
-    snr = 10 * torch.log10(signal_power / noise_power)
+    signal_power = (labels ** 2).sum() / (attention_masks.sum() + 1e-6)  # Add epsilon for numerical stability
+    noise_power = ((labels - logits) ** 2).sum() / (attention_masks.sum() + 1e-6)  # Add epsilon for numerical stability
+    snr = 10 * torch.log10(signal_power / (noise_power + 1e-6))  # Add epsilon for numerical stability
+
+    # Debugging information
+    print(f"Signal Power: {signal_power.item()}, Noise Power: {noise_power.item()}, SNR: {snr.item()}")
 
     return {"mse": masked_mse.item(), "snr": snr.item()}
 
