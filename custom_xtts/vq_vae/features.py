@@ -122,27 +122,26 @@ class VQVAEFeatureExtractor(FeatureExtractionMixin):
 
     Attributes:
         sampling_rate (int): The sample rate of the audio data.
-        max_duration (int): The maximum duration (in seconds) of audio to process.
+        max_samples (int): The maximum max samples.
         n_mels (int): The number of Mel bands to generate.
     """
 
-    def __init__(self, mel_norm_file=None, sampling_rate=16000, max_duration=30):
+    def __init__(self, mel_norm_file=None, sampling_rate=16000, max_samples=160000):
         """
         Initialize the feature extractor.
 
         Args:
             sampling_rate (int): The sample rate of the audio data.
             mel_norm_file (str, optional): Path to the file containing Mel normalization statistics.
-            max_duration (int, optional): Maximum duration (in seconds) of audio to process. Default is 10 seconds.
+            max_samples (int, optional): Maximum duration (in seconds) * sample_rate of audio to process. Default is 10 seconds * 16000 sample_rate = 160000.
         """
         super().__init__()
         self.sampling_rate = sampling_rate
-        self.max_duration = max_duration
         self.mel_spectrogram_extractor = TorchMelSpectrogram(
             mel_norm_file=mel_norm_file,
             sampling_rate=sampling_rate
         )
-        self.max_samples = max_duration * sampling_rate
+        self.max_samples = max_samples
 
     def __call__(self, audio_batch):
         """

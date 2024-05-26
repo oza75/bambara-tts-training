@@ -4,7 +4,7 @@ from datasets import load_dataset
 from transformers import TrainingArguments, Trainer, EvalPrediction, TrainerCallback
 from transformers.integrations import WandbCallback
 from features import VQVAEProcessor, VQVAEFeatureExtractor
-from models import SpeechVQVAE, SpeechVQConfig
+from models import BMSpeechVQVAE, BMSpeechVQVAEConfig
 import wandb
 import numpy as np
 from matplotlib import pyplot as plt
@@ -63,38 +63,6 @@ class AudioLoggingCallback(WandbCallback):
 
             # Close the plot to free memory
             plt.close(fig)
-
-
-def masked_vq_vae_loss(x, x_recon, z_e, z_q, beta=0.25):
-    """
-    Compute the VQ-VAE loss with attention masks applied during forward pass.
-
-    Args:
-        x (torch.Tensor): Original input.
-        x_recon (torch.Tensor): Reconstructed input.
-        z_e (torch.Tensor): Encoder output (continuous).
-        z_q (torch.Tensor): Quantized encoder output (discrete).
-        beta (float): Hyperparameter for commitment loss.
-
-    Returns:
-        torch.Tensor: Total VQ-VAE loss.
-    """
-    # Reconstruction loss
-    recon_loss = F.mse_loss(x_recon, x, reduction='mean')
-
-    # Expand z_e to match z_q dimensions
-    z_e_expanded = z_e.expand_as(z_q)
-
-    # VQ loss
-    vq_loss = F.mse_loss(z_q.detach(), z_e_expanded, reduction='mean')
-
-    # Commitment loss
-    commit_loss = F.mse_loss(z_q, z_e_expanded.detach(), reduction='mean')
-
-    # Total loss
-    loss = recon_loss + vq_loss + beta * commit_loss
-
-    return loss
 
 
 def compute_metrics(eval_pred):
@@ -167,48 +135,27 @@ def preprocess_function(examples, processor):
     }
 
 
-class CustomTrainer(Trainer):
-    def compute_loss(self, model, inputs, return_outputs=False):
-        input_ids = inputs["input_ids"]
-        attention_masks = inputs["attention_masks"]
-
-        # Forward pass
-        outputs = model(input_ids, attention_masks=attention_masks)
-        logits = outputs[0]
-
-        # Compute custom loss
-        loss = masked_vq_vae_loss(
-            x=input_ids,
-            x_recon=logits,
-            z_e=outputs[2],
-            z_q=outputs[1],
-            beta=0.25
-        )
-
-        return (loss, logits) if return_outputs else loss
-
-
 def main():
     # Load the Bambara TTS dataset
     dataset = load_dataset("oza75/bambara-tts", "denoised")
 
     # Split the dataset into training and evaluation sets
-    dataset = dataset['train'].train_test_split(test_size=0.1, seed=42)
+    dataset = dataset['train'].select(range(250)).train_test_split(test_size=0.1, seed=42)
 
     # Instantiate the feature extractor and processor
-    feature_extractor = VQVAEFeatureExtractor(sampling_rate=22050, mel_norm_file='../mel_stats.pth', max_duration=10)
+    feature_extractor = VQVAEFeatureExtractor(sampling_rate=22050, mel_norm_file='../mel_stats.pth', max_samples=221000)
     processor = VQVAEProcessor(feature_extractor)
 
     # Preprocess the datasets
-    dataset = dataset.map(lambda examples: preprocess_function(examples, processor), batched=True, num_proc=5)
+    dataset = dataset.map(lambda examples: preprocess_function(examples, processor), batched=True, batch_size=10, num_proc=2)
 
     train_dataset = dataset["train"]
     eval_dataset = dataset["test"]
 
-    config = SpeechVQConfig()
+    config = BMSpeechVQVAEConfig()
 
     # Define the VQ-VAE model
-    model = SpeechVQVAE(config)
+    model = BMSpeechVQVAE(config)
 
     # Define training arguments
     training_args = TrainingArguments(
@@ -227,12 +174,13 @@ def main():
         tf32=True,
         deepspeed="../deepspeed_config.json",
         report_to=['tensorboard', 'wandb'],
+        # report_to=['tensorboard'],
     )
 
     data_collator = DataCollator()
 
     # Initialize the Trainer
-    trainer = CustomTrainer(
+    trainer = Trainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset,
