@@ -289,30 +289,30 @@ class BMSpeechVQVAE(PreTrainedModel):
             attention_masks: torch.FloatTensor = None
     ):
         z_e = self.encoder(input_ids)
-        print(f"z_e shape: {z_e.shape}")
+        # print(f"z_e shape: {z_e.shape}")
         z_e = self.quant_conv(z_e)
-        print(f"z_e quant conved shape: {z_e.shape}")
+        # print(f"z_e quant conved shape: {z_e.shape}")
         z_q, vq_loss, (perplexity, min_encodings, min_encoding_indices) = self.quantize(z_e)
-        print(f"z_q shape: {z_e.shape}")
+        # print(f"z_q shape: {z_e.shape}")
         z_q = self.post_quant_conv(z_q)
-        print(f"z_q post shape: {z_q.shape}")
+        # print(f"z_q post shape: {z_q.shape}")
 
         if speaker_embeddings is not None and self.config.speaker_embed_dim is not None:
             # Ensure the speaker embeddings are broadcasted to match z_q dimensions
             speaker_embed = speaker_embeddings.unsqueeze(2).unsqueeze(3).expand(-1, -1, z_q.size(2), z_q.size(3))
             # Concatenate speaker embeddings with latents
             concat_z = torch.cat((z_q, speaker_embed), dim=1)
-            print(f"z_q concat shape: {concat_z.shape}")
+            # print(f"z_q concat shape: {concat_z.shape}")
             # Project concatenated tensor back to latent dimension
             bsz, channels, height, width = concat_z.shape
             concat_z = concat_z.view(bsz, channels, -1).permute(0, 2, 1).contiguous()
             concat_z = self.speaker_latents_fc(concat_z)
             concat_z = concat_z.permute(0, 2, 1).contiguous().view(bsz, -1, height, width)
             z_q = concat_z
-            print(f"z_q fc shape: {z_q.shape}")
+            # print(f"z_q fc shape: {z_q.shape}")
 
         z_recon = self.decoder(z_q)
-        print(f"z_recon shape: {z_recon.shape}")
+        # print(f"z_recon shape: {z_recon.shape}")
 
         if attention_masks is not None:
             # Compute the masked reconstruction loss
@@ -321,10 +321,14 @@ class BMSpeechVQVAE(PreTrainedModel):
                 input_ids * attention_masks,
                 reduction='sum'
             )
+            # print(f"recon_loss_first: {recon_loss}")
             # Normalize the loss by the number of valid (unmasked) elements
             recon_loss = recon_loss / attention_masks.sum()
+            # print(f"recon_loss after div: {recon_loss}")
         else:
             recon_loss = torch.nn.functional.mse_loss(z_recon, input_ids)
+
+        # print(f"vq_loss: {vq_loss}, recon_loss: {recon_loss}")
 
         loss = recon_loss + vq_loss
 

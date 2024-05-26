@@ -106,9 +106,9 @@ class DataCollator:
     """
 
     def __call__(self, features):
-        input_ids = torch.stack([torch.tensor(f["input_ids"], dtype=torch.float16) for f in features])
-        attention_masks = torch.stack([torch.tensor(f["attention_masks"], dtype=torch.float16) for f in features])
-        speaker_embeddings = torch.stack([torch.tensor(f["speaker_embeddings"], dtype=torch.float16) for f in features])
+        input_ids = torch.stack([torch.tensor(f["input_ids"], dtype=torch.float32) for f in features])
+        attention_masks = torch.stack([torch.tensor(f["attention_masks"], dtype=torch.float32) for f in features])
+        speaker_embeddings = torch.stack([torch.tensor(f["speaker_embeddings"], dtype=torch.float32) for f in features])
 
         batch_size, n_mels, time_steps = input_ids.shape
 
@@ -178,21 +178,29 @@ def main():
 
     # Define training arguments
     training_args = TrainingArguments(
+        # torch_compile=True,
         output_dir="./results",
         eval_strategy="steps",
         logging_steps=25,
         eval_steps=100,
         save_steps=100,
         learning_rate=5e-5,
-        per_device_train_batch_size=64,
-        per_device_eval_batch_size=64,
+        per_device_train_batch_size=256,
+        per_device_eval_batch_size=128,
         num_train_epochs=20,
         weight_decay=0.01,
         warmup_steps=500,
         optim="adamw_torch_fused",
-        fp16=True,
-        deepspeed="../deepspeed_config.json",
-        report_to=['tensorboard', 'wandb']
+        dataloader_drop_last=True,
+        dataloader_num_workers=16,
+        dataloader_prefetch_factor=4,
+        dataloader_persistent_workers=True,
+        dataloader_pin_memory=True,
+        ddp_find_unused_parameters=False,
+        # fp16=True,
+        # deepspeed="../deepspeed_config.json",
+        report_to=['tensorboard', 'wandb'],
+        # debug="underflow_overflow"
         # report_to=['tensorboard'],
     )
 
