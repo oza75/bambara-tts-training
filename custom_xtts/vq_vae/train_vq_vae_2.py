@@ -155,8 +155,12 @@ def main():
     processor = VQVAEProcessor(feature_extractor)
 
     # Preprocess the datasets
-    dataset = dataset.map(lambda examples: preprocess_function(examples, processor), batched=True, batch_size=1000,
-                          num_proc=5)
+    dataset = dataset.map(
+        lambda examples: preprocess_function(examples, processor),
+        batched=True,
+        batch_size=1000,
+        num_proc=5
+    )
 
     train_dataset = dataset["train"]
     eval_dataset = dataset["test"]
@@ -188,7 +192,7 @@ def main():
         optim="adamw_torch_fused",
         fp16=True,
         deepspeed="../deepspeed_config.json",
-        report_to=['tensorboard', 'wandb'],
+        report_to=['tensorboard', 'wandb']
         # report_to=['tensorboard'],
     )
 
