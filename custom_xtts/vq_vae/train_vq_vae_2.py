@@ -29,14 +29,15 @@ class AudioLoggingCallback(WandbCallback):
         # Move batch to the correct device
         inputs = batch["input_ids"].to(model.device)
         attention_masks = batch["attention_masks"].to(model.device)
+        speaker_embeddings = batch["speaker_embeddings"].to(model.device)
 
         # Get model outputs
         with torch.no_grad():
-            outputs = model(inputs, return_dict=True)
+            loss, outputs = model(inputs, attention_masks, speaker_embeddings=speaker_embeddings)
 
         # Apply attention masks to original and reconstructed mel spectrograms
         inputs_masked = inputs * attention_masks
-        outputs_masked = outputs.sample * attention_masks
+        outputs_masked = outputs * attention_masks
 
         # Log original and reconstructed mel spectrograms
         for idx in range(min(5, inputs.size(0))):  # Log up to 5 samples
@@ -105,15 +106,21 @@ class DataCollator:
     """
 
     def __call__(self, features):
-        input_ids = torch.stack([torch.tensor(f["input_ids"], dtype=torch.float32) for f in features])
-        attention_masks = torch.stack([torch.tensor(f["attention_masks"], dtype=torch.float32) for f in features])
+        input_ids = torch.stack([torch.tensor(f["input_ids"], dtype=torch.float16) for f in features])
+        attention_masks = torch.stack([torch.tensor(f["attention_masks"], dtype=torch.float16) for f in features])
+        speaker_embeddings = torch.stack([torch.tensor(f["speaker_embeddings"], dtype=torch.float16) for f in features])
 
         batch_size, n_mels, time_steps = input_ids.shape
 
         input_ids = input_ids.view(batch_size, 1, n_mels, time_steps)
         attention_masks = attention_masks.view(batch_size, 1, n_mels, time_steps)
 
-        return {"input_ids": input_ids, "label_ids": input_ids, "attention_masks": attention_masks}
+        return {
+            "input_ids": input_ids,
+            "label_ids": input_ids,
+            "attention_masks": attention_masks,
+            "speaker_embeddings": speaker_embeddings
+        }
 
 
 def preprocess_function(examples, processor):
@@ -131,7 +138,8 @@ def preprocess_function(examples, processor):
 
     return {
         "input_ids": batch["mel_spectrogram"],
-        "attention_masks": batch["attention_masks"]
+        "attention_masks": batch["attention_masks"],
+        "speaker_embeddings": batch["speaker_embeddings"]
     }
 
 
@@ -140,38 +148,45 @@ def main():
     dataset = load_dataset("oza75/bambara-tts", "denoised")
 
     # Split the dataset into training and evaluation sets
-    dataset = dataset['train'].select(range(250)).train_test_split(test_size=0.1, seed=42)
+    dataset = dataset['train'].train_test_split(test_size=0.1, seed=42)
 
     # Instantiate the feature extractor and processor
     feature_extractor = VQVAEFeatureExtractor(sampling_rate=22050, mel_norm_file='../mel_stats.pth', max_samples=221000)
     processor = VQVAEProcessor(feature_extractor)
 
     # Preprocess the datasets
-    dataset = dataset.map(lambda examples: preprocess_function(examples, processor), batched=True, batch_size=10, num_proc=2)
+    dataset = dataset.map(lambda examples: preprocess_function(examples, processor), batched=True, batch_size=1000,
+                          num_proc=5)
 
     train_dataset = dataset["train"]
     eval_dataset = dataset["test"]
 
-    config = BMSpeechVQVAEConfig()
+    checkpoint_path = None
 
-    # Define the VQ-VAE model
-    model = BMSpeechVQVAE(config)
+    if checkpoint_path is not None:
+        model = BMSpeechVQVAE.from_pretrained(checkpoint_path)
+    else:
+        config = BMSpeechVQVAEConfig(
+            in_channels=1, out_channels=1, num_layers=4, latent_channels=512, speaker_embed_dim=512, act_fn='relu'
+        )
+        # Define the VQ-VAE model
+        model = BMSpeechVQVAE(config)
 
     # Define training arguments
     training_args = TrainingArguments(
         output_dir="./results",
         eval_strategy="steps",
-        logging_steps=3,
-        eval_steps=3,
-        save_steps=3,
+        logging_steps=25,
+        eval_steps=100,
+        save_steps=100,
         learning_rate=5e-5,
-        per_device_train_batch_size=32,
-        per_device_eval_batch_size=16,
-        num_train_epochs=3,
+        per_device_train_batch_size=64,
+        per_device_eval_batch_size=64,
+        num_train_epochs=20,
         weight_decay=0.01,
         warmup_steps=500,
         optim="adamw_torch_fused",
-        tf32=True,
+        fp16=True,
         deepspeed="../deepspeed_config.json",
         report_to=['tensorboard', 'wandb'],
         # report_to=['tensorboard'],

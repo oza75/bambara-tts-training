@@ -19,7 +19,8 @@ class Encoder(nn.Module):
             kernel_size=4,
             stride=2,
             padding=1,
-            act_fn: nn.Module = nn.ReLU()
+            act_fn: nn.Module = nn.ReLU(),
+            norm_num_groups=32,
     ):
         super(Encoder, self).__init__()
         layers = []
@@ -27,6 +28,11 @@ class Encoder(nn.Module):
 
         for i in range(num_layers):
             out_channels = initial_filters * (2 ** i)
+            if in_channels % norm_num_groups == 0:
+                layers.append(
+                    nn.GroupNorm(num_groups=norm_num_groups, num_channels=in_channels)
+                )
+
             layers.append(
                 nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding)
             )
@@ -50,7 +56,8 @@ class Decoder(nn.Module):
             kernel_size=4,
             stride=2,
             padding=1,
-            act_fn: nn.Module = nn.ReLU()
+            act_fn: nn.Module = nn.ReLU(),
+            norm_num_groups=32,
     ):
         super(Decoder, self).__init__()
         layers = []
@@ -60,6 +67,11 @@ class Decoder(nn.Module):
             out_channels = initial_filters * (2 ** (num_layers - i - 1)) // 2
             if i == num_layers - 1:
                 out_channels = output_channels
+
+            if in_channels % norm_num_groups == 0:
+                layers.append(
+                    nn.GroupNorm(num_groups=norm_num_groups, num_channels=in_channels)
+                )
 
             layers.append(
                 nn.ConvTranspose2d(
@@ -219,8 +231,10 @@ class BMSpeechVQVAEConfig(PretrainedConfig):
         self.sample_size = kwargs.get("sample_size", 32)
         self.num_vq_embeddings = kwargs.get("num_vq_embeddings", 512)
         self.vq_embed_dim = kwargs.get("vq_embed_dim", 64)
+        self.speaker_embed_dim = kwargs.get("speaker_embed_dim", 512)
         self.scaling_factor = kwargs.get("scaling_factor", 0.18215)
         self.norm_type = kwargs.get("norm_type", "group")
+        self.norm_num_groups = kwargs.get("norm_num_groups", 32)
 
 
 class BMSpeechVQVAE(PreTrainedModel):
@@ -229,9 +243,6 @@ class BMSpeechVQVAE(PreTrainedModel):
 
     def __init__(self, config: BMSpeechVQVAEConfig):
         super().__init__(config)
-
-        assert config.input_shape is not None, "Input shape should be provided in the config"
-
         act_fn = self.ACTIVATIONS[str(config.act_fn).lower()]
         self.encoder = Encoder(
             input_channels=config.in_channels,
@@ -240,6 +251,7 @@ class BMSpeechVQVAE(PreTrainedModel):
             kernel_size=config.kernel_size,
             stride=config.stride,
             padding=config.padding,
+            norm_num_groups=config.norm_num_groups,
             act_fn=act_fn(),
         )
 
@@ -251,6 +263,13 @@ class BMSpeechVQVAE(PreTrainedModel):
         )
         self.post_quant_conv = nn.Conv2d(vq_embed_dim, config.latent_channels, 1)
 
+        if config.speaker_embed_dim is not None:
+            # Linear layer to project concatenated latents and speaker embeddings back to latent dimension
+            self.speaker_latents_fc = nn.Linear(
+                config.latent_channels + config.speaker_embed_dim,
+                config.latent_channels
+            )
+
         self.decoder = Decoder(
             output_channels=config.out_channels,
             num_layers=config.num_layers,
@@ -258,7 +277,7 @@ class BMSpeechVQVAE(PreTrainedModel):
             kernel_size=config.kernel_size,
             stride=config.stride,
             padding=config.padding,
-            output_shape=config.input_shape,
+            norm_num_groups=config.norm_num_groups,
             act_fn=act_fn(),
         )
 
@@ -266,6 +285,7 @@ class BMSpeechVQVAE(PreTrainedModel):
             self,
             input_ids: torch.FloatTensor,
             label_ids: torch.FloatTensor = None,
+            speaker_embeddings: torch.FloatTensor = None,
             attention_masks: torch.FloatTensor = None
     ):
         z_e = self.encoder(input_ids)
@@ -276,6 +296,21 @@ class BMSpeechVQVAE(PreTrainedModel):
         print(f"z_q shape: {z_e.shape}")
         z_q = self.post_quant_conv(z_q)
         print(f"z_q post shape: {z_q.shape}")
+
+        if speaker_embeddings is not None and self.config.speaker_embed_dim is not None:
+            # Ensure the speaker embeddings are broadcasted to match z_q dimensions
+            speaker_embed = speaker_embeddings.unsqueeze(2).unsqueeze(3).expand(-1, -1, z_q.size(2), z_q.size(3))
+            # Concatenate speaker embeddings with latents
+            concat_z = torch.cat((z_q, speaker_embed), dim=1)
+            print(f"z_q concat shape: {concat_z.shape}")
+            # Project concatenated tensor back to latent dimension
+            bsz, channels, height, width = concat_z.shape
+            concat_z = concat_z.view(bsz, channels, -1).permute(0, 2, 1).contiguous()
+            concat_z = self.speaker_latents_fc(concat_z)
+            concat_z = concat_z.permute(0, 2, 1).contiguous().view(bsz, -1, height, width)
+            z_q = concat_z
+            print(f"z_q fc shape: {z_q.shape}")
+
         z_recon = self.decoder(z_q)
         print(f"z_recon shape: {z_recon.shape}")
 
@@ -293,13 +328,14 @@ class BMSpeechVQVAE(PreTrainedModel):
 
         loss = recon_loss + vq_loss
 
-        return {
-            "loss": loss,
-            "perplexity": perplexity,
-            "min_encodings": min_encodings,
-            "min_encoding_indices": min_encoding_indices,
-            "reconstruction": z_recon
-        }
+        # return {
+        #     "loss": loss,
+        #     "perplexity": perplexity,
+        #     "min_encodings": min_encodings,
+        #     "min_encoding_indices": min_encoding_indices,
+        #     "reconstruction": z_recon
+        # }
+        return loss, z_recon
 
 
 class VQVAE(VQModel):
