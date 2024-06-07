@@ -11,3 +11,4 @@ diffusers
 wandb
 tensorboardX
 matplotlib
+einops
