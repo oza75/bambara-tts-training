@@ -1,0 +1,6 @@
+._*
+wandb
+results
+bm_xtts
+model.pth
+dvae.pth

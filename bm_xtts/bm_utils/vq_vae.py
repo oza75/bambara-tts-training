@@ -217,7 +217,7 @@ class BMSpeechVQVAEConfig(PretrainedConfig):
         self.input_shape = kwargs.get("input_shape", None)
         self.in_channels = kwargs.get("in_channels", 1)
         self.out_channels = kwargs.get("out_channels", 1)
-        self.latent_channels = kwargs.get("latent_channels", 1)
+        self.latent_channels = kwargs.get("latent_channels", 512)
         self.num_layers = kwargs.get("num_layers", 4)
         self.initial_filters = kwargs.get("initial_filters", 64)
         self.kernel_size = kwargs.get("kernel_size", 4)
