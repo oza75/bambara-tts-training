@@ -21,6 +21,7 @@ class AudioLoggingCallback(WandbCallback):
 
         # Ensure the trainer and model are available
         model = kwargs.get("model")
+        tokenizer : XTTSTokenizer = kwargs.get("tokenizer")
         eval_dataloader = kwargs.get("eval_dataloader")
 
         if eval_dataloader is None or model is None:
@@ -30,44 +31,15 @@ class AudioLoggingCallback(WandbCallback):
         # Get a batch from the validation dataset
         batch = next(iter(eval_dataloader))
 
-        # Move batch to the correct device
-        inputs = batch["input_ids"].to(model.device)
-        attention_masks = batch["attention_masks"].to(model.device)
-        speaker_embeddings = batch["speaker_embeddings"].to(model.device)
-
         # Get model outputs
         with torch.no_grad():
-            loss, outputs = model(inputs, attention_masks, speaker_embeddings=speaker_embeddings)
+            outputs = model(**batch)
 
-        # Apply attention masks to original and reconstructed mel spectrograms
-        inputs_masked = inputs * attention_masks
-        outputs_masked = outputs * attention_masks
-
-        # Log original and reconstructed mel spectrograms
-        for idx in range(min(5, inputs.size(0))):  # Log up to 5 samples
-            original_mel = inputs_masked[idx].cpu().squeeze(0).numpy()
-            reconstructed_mel = outputs_masked[idx].squeeze(0).cpu().numpy()
-
-            # Extract valid sections based on the attention mask
-            valid_length = int(attention_masks[idx].squeeze(0)[0].sum().item())
-            original_mel_valid = original_mel[:, :valid_length]
-            reconstructed_mel_valid = reconstructed_mel[:, :valid_length]
-
-            # Plot and save the mel spectrograms
-            fig, axs = plt.subplots(2, 1, figsize=(10, 6))
-            axs[0].imshow(original_mel_valid, aspect='auto', origin='lower')
-            axs[0].set_title('Original Mel Spectrogram')
-            axs[1].imshow(reconstructed_mel_valid, aspect='auto', origin='lower')
-            axs[1].set_title('Reconstructed Mel Spectrogram')
-            plt.tight_layout()
-
-            # Log using wandb
+        for idx, wav in enumerate(outputs['wavs']):
+            text = tokenizer.decode(batch['input_ids'][idx], skip_special_tokens=True)
             self._wandb.log({
-                f"mel_spectrogram_{idx}": wandb.Image(fig)
+                f"audio_{idx}": wandb.Audio(wav.cpu().numpy(), sample_rate=22050, caption=text)
             })
-
-            # Close the plot to free memory
-            plt.close(fig)
 
 
 def compute_metrics(eval_pred):
@@ -97,11 +69,7 @@ class DataCollator:
 
     def __call__(self, features):
         batch = {}
-        # keys = [
-        #     'wav_mels', 'cond_16k', 'cond_len', 'cond_idxs', 'cond_mels', 'wav',
-        #     'orig_wavs', 'wav_lengths', 'text_tokens', 'text_attn_masks', 'text_lengths', 'input_ids', 'label_ids',
-        #     'cond_lens'
-        # ]
+
         for feature in features:
             for k in feature.keys():
                 batch[k] = batch[k] if k in batch else []
@@ -147,7 +115,8 @@ def main():
     dataset = dataset.cast_column("audio", datasets.Audio(sampling_rate=22050)).rename_column('bambara', 'text')
 
     # Split the dataset into training and evaluation sets
-    dataset = dataset['train'].select(range(50)).train_test_split(test_size=0.1, seed=42)
+    dataset = dataset.filter(lambda ex: [x < 221000/22050 for x in ex['duration']], batched=True, batch_size=10000)
+    dataset = dataset['train'].train_test_split(test_size=0.1, seed=42)
 
     # Instantiate the feature extractor and processor
     feature_extractor = XTTSFeatureExtractor("../mel_stats.pth", sampling_rate=22050, max_samples=221000)
@@ -188,9 +157,10 @@ def main():
         eval_steps=1,
         save_steps=200,
         learning_rate=5e-5,
-        per_device_train_batch_size=8,
+        per_device_train_batch_size=16,
         per_device_eval_batch_size=8,
-        num_train_epochs=20,
+        gradient_accumulation_steps=4,
+        num_train_epochs=50,
         weight_decay=0.01,
         warmup_steps=500,
         optim="adamw_hf",
@@ -203,9 +173,9 @@ def main():
         # ddp_find_unused_parameters=False,
         # fp16=True,
         # deepspeed="../deepspeed_config.json",
-        # report_to=['tensorboard', 'wandb'],
+        report_to=['tensorboard', 'wandb'],
         # debug="underflow_overflow"
-        report_to=['tensorboard'],
+        # report_to=['tensorboard'],
     )
 
     data_collator = DataCollator()
@@ -217,11 +187,10 @@ def main():
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         data_collator=data_collator,
+        tokenizer=processor.tokenizer,
         compute_metrics=compute_metrics,
-        # callbacks=[AudioLoggingCallback]
+        callbacks=[AudioLoggingCallback]
     )
-
-    # torch.autograd.set_detect_anomaly(True)
 
     # Start training
     trainer.train()
