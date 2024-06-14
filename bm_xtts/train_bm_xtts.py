@@ -115,7 +115,7 @@ def main():
     dataset = dataset.cast_column("audio", datasets.Audio(sampling_rate=22050)).rename_column('bambara', 'text')
 
     # Split the dataset into training and evaluation sets
-    dataset = dataset.filter(lambda ex: [x < 221000/22050 for x in ex['duration']], batched=True, batch_size=10000)
+    dataset = dataset.filter(lambda ex: [x < 221000/22050 for x in ex['duration']], batched=True, batch_size=10000, num_proc=4)
     dataset = dataset['train'].train_test_split(test_size=0.1, seed=42)
 
     # Instantiate the feature extractor and processor
@@ -128,7 +128,7 @@ def main():
         lambda examples: preprocess_function(examples, processor),
         batched=True,
         batch_size=1000,
-        num_proc=1,
+        num_proc=4,
     )
 
     train_dataset = dataset["train"]
