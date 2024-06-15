@@ -2,6 +2,7 @@ import datasets
 import torch
 import torch.nn.functional as F
 from datasets import load_dataset
+from torch.nn.utils.rnn import pad_sequence
 from transformers import TrainingArguments, Trainer, EvalPrediction, TrainerCallback
 from transformers.integrations import WandbCallback
 import wandb
@@ -13,6 +14,11 @@ from bm_models import Xtts, XttsConfig
 
 DEVICE = torch.device("mps")
 
+# Instantiate the feature extractor and processor
+feature_extractor = XTTSFeatureExtractor("../mel_stats.pth", sampling_rate=22050, max_samples=221000)
+tokenizer = XTTSTokenizer.from_pretrained("openai-community/gpt2-medium")
+processor = XTTSProcessor(feature_extractor, tokenizer)
+
 
 class AudioLoggingCallback(WandbCallback):
     def on_evaluate(self, args, state, control, **kwargs):
@@ -21,7 +27,7 @@ class AudioLoggingCallback(WandbCallback):
 
         # Ensure the trainer and model are available
         model = kwargs.get("model")
-        tokenizer : XTTSTokenizer = kwargs.get("tokenizer")
+        tokenizer: XTTSTokenizer = kwargs.get("tokenizer")
         eval_dataloader = kwargs.get("eval_dataloader")
 
         if eval_dataloader is None or model is None:
@@ -76,7 +82,12 @@ class DataCollator:
                 batch[k].append(torch.tensor(feature[k], device=DEVICE))
 
         for k in batch.keys():
-            batch[k] = torch.stack(batch[k]).to(device=DEVICE) if k not in ['orig_wavs'] else batch[k]
+            if k == 'text_attn_masks':
+                batch[k] = pad_sequence(batch[k], batch_first=True, padding_value=0)
+            elif k in ['input_ids', 'label_ids']:
+                batch[k] = pad_sequence(batch[k], batch_first=True, padding_value=processor.tokenizer.pad_token_id)
+            else:
+                batch[k] = torch.stack(batch[k]).to(device=DEVICE) if k not in ['orig_wavs'] else batch[k]
 
         return batch
 
@@ -115,26 +126,22 @@ def main():
     dataset = dataset.cast_column("audio", datasets.Audio(sampling_rate=22050)).rename_column('bambara', 'text')
 
     # Split the dataset into training and evaluation sets
-    dataset = dataset.filter(lambda ex: [x < 221000/22050 for x in ex['duration']], batched=True, batch_size=10000, num_proc=4)
-    dataset = dataset['train'].train_test_split(test_size=0.1, seed=42)
-
-    # Instantiate the feature extractor and processor
-    feature_extractor = XTTSFeatureExtractor("../mel_stats.pth", sampling_rate=22050, max_samples=221000)
-    tokenizer = XTTSTokenizer.from_pretrained("openai-community/gpt2-medium")
-    processor = XTTSProcessor(feature_extractor, tokenizer)
+    dataset = dataset['train'].select(range(50)).filter(lambda ex: [x < 221000 / 22050 for x in ex['duration']],
+                                                        batched=True, batch_size=50)
+    dataset = dataset.train_test_split(test_size=0.1, seed=42)
 
     # Preprocess the datasets
     dataset = dataset.map(
         lambda examples: preprocess_function(examples, processor),
         batched=True,
-        batch_size=1000,
-        num_proc=4,
+        batch_size=20,
+        num_proc=1,
     )
 
     train_dataset = dataset["train"]
     eval_dataset = dataset["test"]
 
-    checkpoint_path = None
+    checkpoint_path = "./bm_xtts"
 
     if checkpoint_path is not None:
         model = Xtts.from_pretrained(checkpoint_path)
