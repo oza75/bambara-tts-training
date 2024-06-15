@@ -108,8 +108,6 @@ class Xtts(PreTrainedModel):
             layers=config.gpt_layers,
             model_dim=config.gpt_n_model_channels,
             heads=config.gpt_n_heads,
-            start_text_token=config.gpt_start_text_token,
-            stop_text_token=config.gpt_stop_text_token,
             max_text_tokens=config.gpt_max_text_tokens,
             max_mel_tokens=config.gpt_max_audio_tokens,
             max_prompt_tokens=config.gpt_max_prompt_tokens,
@@ -117,7 +115,6 @@ class Xtts(PreTrainedModel):
             num_audio_tokens=config.gpt_num_audio_tokens,
             start_audio_token=config.gpt_start_audio_token,
             stop_audio_token=config.gpt_stop_audio_token,
-            use_perceiver_resampler=config.gpt_use_perceiver_resampler,
             code_stride_len=config.gpt_code_stride_len,
         )
 
@@ -141,12 +138,9 @@ class Xtts(PreTrainedModel):
             self,
             input_ids: torch.LongTensor,  # text_tokens
             label_ids: torch.LongTensor,  # same as text_tokens
-            text_lengths: torch.LongTensor,
             text_attn_masks: torch.FloatTensor,
             cond_16k: torch.FloatTensor = None,
             cond_mels: torch.FloatTensor = None,
-            cond_idxs: torch.LongTensor = None,
-            cond_lens: torch.LongTensor = None,
             orig_wavs: torch.FloatTensor = None,
             wav_mels: torch.FloatTensor = None,
             wav_lengths: torch.LongTensor = None,
@@ -155,13 +149,10 @@ class Xtts(PreTrainedModel):
 
         loss_text, loss_mel, mel_logits, mel_latents, mel_attn_masks = self.gpt_wrapper(
             input_ids,
-            text_lengths,
             text_attn_masks,
             audio_codes,
             wav_lengths,
             cond_mels=cond_mels,
-            cond_idxs=cond_idxs,
-            cond_lens=cond_lens,
         )
 
         with torch.no_grad():

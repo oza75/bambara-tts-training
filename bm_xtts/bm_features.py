@@ -175,7 +175,6 @@ class XTTSFeatureExtractor(FeatureExtractionMixin):
         waveforms = []
         audios = []
         waveform_lengths = []
-        # wav_attn_masks = []
         for audio in audio_batch:
             # Extract the audio array from the input dictionary
             waveform = audio["array"]
@@ -190,58 +189,34 @@ class XTTSFeatureExtractor(FeatureExtractionMixin):
             # Truncate or pad the waveform to the maximum length
             if waveform.size(0) > self.max_samples:
                 waveform = waveform[:self.max_samples]
-                # wav_attn_mask = torch.ones(self.max_samples, dtype=torch.long, device=device)
             else:
                 padding = self.max_samples - waveform.size(0)
-                # wav_attn_mask = torch.cat([
-                #     torch.ones(waveform.size(0), dtype=torch.long, device=device),
-                #     torch.zeros(padding, dtype=torch.long, device=device)
-                # ])
                 waveform = torch.nn.functional.pad(waveform, (0, padding))
 
             waveforms.append(waveform)
-            # wav_attn_masks.append(wav_attn_mask)
 
         # Stack the waveforms and attention masks into tensors
         waveforms = torch.stack(waveforms).to(device=device)
         # Extract Mel spectrograms
         mel_spectrograms = self.mel_spectrogram_extractor(waveforms)
 
-        # Calculate the new size for the attention masks
-        batch_size, n_mels, n_frames = mel_spectrograms.shape
-
-        # Generate the attention masks at the time step level
-        # for idx, waveform in enumerate(waveforms):
-        #     attention_mask = attention_masks[idx].float()
-        #     attention_mask = torch.nn.functional.interpolate(
-        #         attention_mask.unsqueeze(0).unsqueeze(0),
-        #         size=n_frames,
-        #         mode='nearest'
-        #     ).squeeze()
-        #     attention_masks[idx] = attention_mask
-
-        # Stack the attention masks and reshape to match the mel spectrograms
-        # attention_masks = torch.stack(attention_masks).view(batch_size, 1, n_frames).expand(-1, n_mels, -1)
-        # attention_masks = torch.stack(attention_masks)
-        # attention_masks = attention_masks.to(device=device)
-        cond, cond_len, cond_idxs = self.get_prompt_slice(waveforms, is_eval=is_eval, device=device)
+        cond, cond_idxs = self.get_prompt_slice(waveforms, is_eval=is_eval, device=device)
         cond_mels = self.get_conditioning_mel_spectrogram(cond)
         cond_16k = torchaudio.functional.resample(cond, self.sampling_rate, 16000) \
             if self.sampling_rate != 16000 \
             else cond
-        # attn_cond_masks = self.get_conditioning_attn_masks(cond_mels, cond_idxs, device)
 
         # Return a dictionary containing the Mel spectrograms and attention masks
         return {
             "mel_spectrogram": mel_spectrograms,
             # "attention_masks": attention_masks,
-            "waveforms": waveforms,
+            # "waveforms": waveforms,
             "orig_waveforms": audios,
             "waveform_lengths": torch.stack(waveform_lengths),
-            "cond": cond,
+            # "cond": cond,
             "cond_16k": cond_16k,
-            "cond_len": cond_len,
-            "cond_idxs": cond_idxs,
+            # "cond_len": cond_len,
+            # "cond_idxs": cond_idxs,
             "cond_mels": cond_mels,
             # "cond_attn_masks": attn_cond_masks
         }
@@ -268,7 +243,7 @@ class XTTSFeatureExtractor(FeatureExtractionMixin):
 
         conditioning = []
         conditioning_idxs = []
-        conditioning_len = []
+        # conditioning_len = []
 
         for idx, sample in enumerate(audio_batch):
             rel_clip = sample.unsqueeze(0)
@@ -293,11 +268,11 @@ class XTTSFeatureExtractor(FeatureExtractionMixin):
             conditioning.append(rel_clip)
             conditioning_idxs.append(torch.tensor(cond_idxs, device=device))
             # conditioning_len.append(torch.tensor(rel_clip.shape[-1]))
-            conditioning_len.append(torch.tensor(torch.nan, device=device))
+            # conditioning_len.append(torch.tensor(torch.nan, device=device))
 
         return (
             torch.stack(conditioning).to(device=device),
-            torch.tensor(conditioning_len).to(device=device),
+            # torch.tensor(conditioning_len).to(device=device),
             torch.stack(conditioning_idxs).to(device=device)
         )
 
@@ -450,20 +425,20 @@ class XTTSProcessor(ProcessorMixin):
         text_features = self.tokenizer(batch['text'], lang="bm", padding=True, return_tensors="pt")
         batch["wav_mels"] = features["mel_spectrogram"]
         # batch["wav_mel_attn_masks"] = features["attention_masks"]
-        batch["cond"] = features["cond"]
+        # batch["cond"] = features["cond"]
         batch["cond_16k"] = features["cond_16k"]
-        batch["cond_len"] = features["cond_len"]
-        batch["cond_idxs"] = features["cond_idxs"]
+        # batch["cond_len"] = features["cond_len"]
+        # batch["cond_idxs"] = features["cond_idxs"]
         batch["cond_mels"] = features["cond_mels"]
         # batch["cond_attn_masks"] = features["cond_attn_masks"]
-        batch["wav"] = features["waveforms"]
+        # batch["wav"] = features["waveforms"]
         batch["orig_wavs"] = features["orig_waveforms"]
         batch["wav_lengths"] = features["waveform_lengths"]
-        batch["speaker_embeddings"] = torch.stack(
-            [torch.tensor(x) for x in batch['speaker_embeddings']]
-        ).to(device=device)
+        # batch["speaker_embeddings"] = torch.stack(
+        #     [torch.tensor(x) for x in batch['speaker_embeddings']]
+        # ).to(device=device)
         batch["text_tokens"] = text_features["input_ids"].to(device=device)
         batch["text_attn_masks"] = text_features["attention_mask"].to(device=device)
-        batch["text_lengths"] = torch.sum(batch["text_attn_masks"], dim=1).to(device=device)
+        # batch["text_lengths"] = torch.sum(batch["text_attn_masks"], dim=1).to(device=device)
 
         return batch

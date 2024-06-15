@@ -21,12 +21,9 @@ if __name__ == "__main__":
     model(
         input_ids=batch['text_tokens'],
         label_ids=batch['text_tokens'],  # same as text_tokens
-        text_lengths=batch['text_lengths'],
         text_attn_masks=batch['text_attn_masks'],
         cond_16k=batch['cond_16k'],
         cond_mels=batch['cond_mels'],
-        cond_idxs=batch['cond_idxs'],
-        cond_lens=batch['cond_len'],
         orig_wavs=batch['orig_wavs'],
         wav_mels=batch['wav_mels'],
         wav_lengths=batch['wav_lengths'],

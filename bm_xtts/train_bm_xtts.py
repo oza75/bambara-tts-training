@@ -47,8 +47,7 @@ class AudioLoggingCallback(WandbCallback):
                 f"audio_{idx}": wandb.Audio(wav.cpu().numpy(), sample_rate=22050, caption=text)
             })
 
-
-def compute_metrics(eval_pred):
+def compute_metrics(eval_pred, compute_result: bool = False):
     """
     Compute evaluation metrics for VQ-VAE.
 
@@ -92,7 +91,7 @@ class DataCollator:
         return batch
 
 
-def preprocess_function(examples, processor):
+def preprocess_function(examples):
     """
     Preprocess the dataset examples using the processor.
 
@@ -108,12 +107,9 @@ def preprocess_function(examples, processor):
     return dict(
         input_ids=batch['text_tokens'],
         label_ids=batch['text_tokens'],  # same as text_tokens
-        text_lengths=batch['text_lengths'],
         text_attn_masks=batch['text_attn_masks'],
         cond_16k=batch['cond_16k'],
         cond_mels=batch['cond_mels'],
-        cond_idxs=batch['cond_idxs'],
-        cond_lens=batch['cond_len'],
         orig_wavs=batch['orig_wavs'],
         wav_mels=batch['wav_mels'],
         wav_lengths=batch['wav_lengths'],
@@ -126,16 +122,16 @@ def main():
     dataset = dataset.cast_column("audio", datasets.Audio(sampling_rate=22050)).rename_column('bambara', 'text')
 
     # Split the dataset into training and evaluation sets
-    dataset = dataset['train'].select(range(50)).filter(lambda ex: [x < 221000 / 22050 for x in ex['duration']],
-                                                        batched=True, batch_size=50)
+    dataset = dataset['train'].select(range(1000)).filter(lambda ex: [x < 221000 / 22050 for x in ex['duration']],
+                                                          batched=True, batch_size=1000)
     dataset = dataset.train_test_split(test_size=0.1, seed=42)
 
     # Preprocess the datasets
     dataset = dataset.map(
-        lambda examples: preprocess_function(examples, processor),
+        preprocess_function,
         batched=True,
-        batch_size=20,
-        num_proc=1,
+        batch_size=50,
+        # num_proc=1,
     )
 
     train_dataset = dataset["train"]
@@ -166,7 +162,8 @@ def main():
         learning_rate=5e-5,
         per_device_train_batch_size=16,
         per_device_eval_batch_size=8,
-        gradient_accumulation_steps=4,
+        # gradient_accumulation_steps=4,
+        batch_eval_metrics=True,
         num_train_epochs=50,
         weight_decay=0.01,
         warmup_steps=500,
